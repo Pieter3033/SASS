@@ -49,9 +49,28 @@ function Ground() {
   )
 }
 
-function Axe({ position, rotation }) {
+function Axe({ position, rotation, swingRef }) {
+  const groupRef = useRef(null)
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return
+    const swing = swingRef.current
+    const target = rotation[0] + swing
+    groupRef.current.rotation.x = THREE.MathUtils.lerp(
+      groupRef.current.rotation.x,
+      target,
+      0.25
+    )
+  })
+
   return (
-    <group position={position} rotation={rotation} scale={0.7} castShadow>
+    <group
+      ref={groupRef}
+      position={position}
+      rotation={rotation}
+      scale={0.7}
+      castShadow
+    >
       <mesh castShadow>
         <boxGeometry args={[0.1, 0.6, 0.1]} />
         <meshStandardMaterial color="#6b4f2a" roughness={0.8} />
@@ -64,8 +83,19 @@ function Axe({ position, rotation }) {
   )
 }
 
-function Character({ groupRef }) {
+function Character({ groupRef, walkRef, chopRef, timeRef }) {
   const { scene } = useGLTF(CESIUMMAN_URL)
+  const pivotRef = useRef(null)
+  const swingRef = useRef(0)
+  const axeGroupRef = useRef(null)
+  const bonesRef = useRef({
+    leftUpper: null,
+    leftLower: null,
+    rightUpper: null,
+    rightLower: null,
+    rightHand: null,
+  })
+
   useMemo(() => {
     scene.traverse((child) => {
       if (child.isMesh) {
@@ -74,18 +104,72 @@ function Character({ groupRef }) {
       }
     })
   }, [scene])
+
+  useMemo(() => {
+    const bones = []
+    scene.traverse((child) => {
+      if (child.isBone) bones.push(child)
+    })
+
+    const byName = (patterns) =>
+      bones.find((bone) =>
+        patterns.some((pattern) =>
+          bone.name.toLowerCase().includes(pattern)
+        )
+      )
+
+    bonesRef.current.rightHand = byName(['rhand', 'right_hand', 'hand.r', 'r hand', 'right hand'])
+    bonesRef.current.rightLower = byName(['rforearm', 'right_forearm', 'forearm.r', 'r lowerarm', 'right lowerarm'])
+    bonesRef.current.rightUpper = byName(['rupperarm', 'right_upperarm', 'upperarm.r', 'r arm', 'right arm'])
+    bonesRef.current.leftLower = byName(['lforearm', 'left_forearm', 'forearm.l', 'l lowerarm', 'left lowerarm'])
+    bonesRef.current.leftUpper = byName(['lupperarm', 'left_upperarm', 'upperarm.l', 'l arm', 'left arm'])
+  }, [scene])
+
+  useEffect(() => {
+    if (!axeGroupRef.current) return
+    const rightHand = bonesRef.current.rightHand
+    if (rightHand) {
+      rightHand.add(axeGroupRef.current)
+      axeGroupRef.current.position.set(0.05, -0.02, 0.02)
+      axeGroupRef.current.rotation.set(0.2, 0, Math.PI / 2)
+    }
+  }, [])
+
+  useFrame(() => {
+    if (!pivotRef.current) return
+    const t = timeRef.current
+    const isWalking = walkRef.current
+    const isChopping = chopRef.current
+    const walkBob = isWalking ? Math.sin(t * 8) * 0.05 : 0
+    swingRef.current =
+      bonesRef.current.rightHand ? 0 : isChopping ? Math.sin(t * 20) * 0.6 : 0
+    pivotRef.current.position.y = walkBob
+
+    const { leftUpper, leftLower, rightUpper, rightLower } = bonesRef.current
+    if (leftUpper) leftUpper.rotation.x = isWalking ? Math.sin(t * 8) * 0.3 : 0
+    if (leftLower) leftLower.rotation.x = isWalking ? Math.sin(t * 8 + 0.6) * 0.2 : 0
+    if (rightUpper) rightUpper.rotation.x = isChopping ? -0.6 + Math.sin(t * 20) * 0.4 : 0
+    if (rightLower) rightLower.rotation.x = isChopping ? -0.8 + Math.sin(t * 20 + 0.4) * 0.3 : 0
+  })
+
   return (
     <group ref={groupRef} position={[0, 0, 0]} scale={1.1}>
-      <primitive object={scene} />
-      <Axe position={[0.45, 1.1, 0.1]} rotation={[0, 0, Math.PI / 2]} />
+      <group ref={pivotRef}>
+        <primitive object={scene} />
+        <group ref={axeGroupRef} position={[0.45, 1.1, 0.1]}>
+          <Axe position={[0, 0, 0]} rotation={[0, 0, Math.PI / 2]} swingRef={swingRef} />
+        </group>
+      </group>
     </group>
   )
 }
 
 function Tree({ position = [3, 0, -2], canChop, onChop }) {
   const groupRef = useRef(null)
+  const trunkRef = useRef(null)
   const [isFalling, setIsFalling] = useState(false)
   const fallAmount = useRef(0)
+  const hitTime = useRef(0)
 
   useFrame((_, delta) => {
     if (!isFalling || !groupRef.current) return
@@ -101,14 +185,30 @@ function Tree({ position = [3, 0, -2], canChop, onChop }) {
     if (isFalling) return
     if (!canChop) return
     const next = onChop()
+    hitTime.current = 0
     if (next <= 0) {
       setIsFalling(true)
     }
   }
 
+  useFrame((_, delta) => {
+    hitTime.current += delta
+    const pulse = Math.max(1 - hitTime.current * 3, 0)
+    if (trunkRef.current) {
+      if (pulse <= 0) {
+        if (trunkRef.current.scale.x !== 1) {
+          trunkRef.current.scale.set(1, 1, 1)
+        }
+        return
+      }
+      const scale = 1 + pulse * 0.05
+      trunkRef.current.scale.set(scale, scale, scale)
+    }
+  })
+
   return (
     <group ref={groupRef} position={position} onPointerDown={handleChop}>
-      <mesh castShadow>
+      <mesh ref={trunkRef} castShadow>
         <cylinderGeometry args={[0.25, 0.35, 2.2, 8]} />
         <meshStandardMaterial color={canChop ? '#6a4a2f' : '#4f3a26'} roughness={0.9} />
       </mesh>
@@ -134,6 +234,13 @@ function Scene({ onHint, onTreeHealth }) {
   const [keys, setKeys] = useState({})
   const speed = 3
   const treePosition = useMemo(() => new THREE.Vector3(3, 0, -2), [])
+  const tempDirection = useRef(new THREE.Vector3())
+  const tempCameraTarget = useRef(new THREE.Vector3())
+  const tempCameraPos = useRef(new THREE.Vector3())
+  const isWalkingRef = useRef(false)
+  const isChoppingRef = useRef(false)
+  const chopCooldown = useRef(0)
+  const clock = useRef(0)
 
   useEffect(() => {
     const handleDown = (event) => {
@@ -151,7 +258,8 @@ function Scene({ onHint, onTreeHealth }) {
   }, [])
 
   useFrame((_, delta) => {
-    const direction = new THREE.Vector3(
+    clock.current += delta
+    const direction = tempDirection.current.set(
       (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0),
       0,
       (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0)
@@ -159,26 +267,34 @@ function Scene({ onHint, onTreeHealth }) {
     if (direction.lengthSq() > 0) {
       direction.normalize().multiplyScalar(speed * delta)
       playerRef.current.add(direction)
+      isWalkingRef.current = true
+    } else {
+      isWalkingRef.current = false
     }
 
     if (characterRef.current) {
       characterRef.current.position.copy(playerRef.current)
     }
 
-    const cameraTarget = new THREE.Vector3(
+    const cameraTarget = tempCameraTarget.current.set(
       playerRef.current.x,
       1.8,
       playerRef.current.z
     )
-    camera.position.lerp(
-      new THREE.Vector3(
-        playerRef.current.x + 6,
-        6,
-        playerRef.current.z + 8
-      ),
-      0.08
+    const desiredCameraPos = tempCameraPos.current.set(
+      playerRef.current.x + 6,
+      6,
+      playerRef.current.z + 8
     )
+    camera.position.lerp(desiredCameraPos, 0.08)
     camera.lookAt(cameraTarget)
+
+    if (chopCooldown.current > 0) {
+      chopCooldown.current = Math.max(chopCooldown.current - delta, 0)
+      if (chopCooldown.current === 0) {
+        isChoppingRef.current = false
+      }
+    }
   })
 
   const distanceToTree = playerRef.current.distanceTo(treePosition)
@@ -203,6 +319,9 @@ function Scene({ onHint, onTreeHealth }) {
   }, [canChop, treeHealth, onHint])
 
   const handleChop = () => {
+    if (chopCooldown.current > 0) return treeHealth
+    chopCooldown.current = 0.35
+    isChoppingRef.current = true
     setTreeHealth((prev) => Math.max(prev - 1, 0))
     return Math.max(treeHealth - 1, 0)
   }
@@ -220,7 +339,12 @@ function Scene({ onHint, onTreeHealth }) {
       />
       <Ground />
       <Tree position={treePosition.toArray()} canChop={canChop} onChop={handleChop} />
-      <Character groupRef={characterRef} />
+      <Character
+        groupRef={characterRef}
+        walkRef={isWalkingRef}
+        chopRef={isChoppingRef}
+        timeRef={clock}
+      />
     </>
   )
 }

@@ -31,3 +31,26 @@
   color: rgba(243, 247, 242, 0.82);
   line-height: 1.4;
 }
+
+.hud-hotbar {
+  display: flex;
+  gap: 8px;
+  margin-top: 1rem;
+}
+
+.hud-slot {
+  width: 32px;
+  height: 32px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Press Start 2P', cursive;
+  font-size: 0.6rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.hud-slot.active {
+  border-color: #f1c40f;
+  background-color: rgba(241, 196, 15, 0.2);
+}

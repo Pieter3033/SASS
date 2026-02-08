@@ -1,0 +1,132 @@
+.inventory-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(0, 0, 0, 0.4);
+    z-index: 900;
+}
+
+.inventory-panel {
+    background-color: #2c3e50;
+    /* Matches MainMenu */
+    border: 4px solid #1a252f;
+    padding: 1.5rem;
+    box-shadow: 10px 10px 0px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.inventory-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #ecf0f1;
+    font-family: 'Press Start 2P', cursive;
+    margin-bottom: 0.5rem;
+}
+
+.inventory-header h2 {
+    font-size: 1.2rem;
+    margin: 0;
+    color: #f1c40f;
+    text-shadow: 2px 2px 0px #c27c0e;
+}
+
+.close-btn {
+    background: #c0392b;
+    border: 2px solid #e74c3c;
+    color: white;
+    width: 32px;
+    height: 32px;
+    font-family: 'Press Start 2P', cursive;
+    cursor: pointer;
+}
+
+.inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    background-color: #34495e;
+    padding: 10px;
+    border-radius: 4px;
+    border: 2px inset #2c3e50;
+}
+
+.inventory-slot {
+    width: 50px;
+    height: 50px;
+    background-color: #7f8c8d;
+    border: 2px solid #95a5a6;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.inventory-slot:hover {
+    background-color: #bdc3c7;
+}
+
+.item {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: grab;
+    position: relative;
+}
+
+.item:active {
+    cursor: grabbing;
+}
+
+.item-icon {
+    font-size: 1.5rem;
+}
+
+.item-count {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    font-size: 0.6rem;
+    color: white;
+    font-family: 'Press Start 2P', cursive;
+    text-shadow: 1px 1px 0 #000;
+}
+
+.inventory-divider {
+    height: 2px;
+    background-color: #1a252f;
+    margin: 0.5rem 0;
+}
+
+.hotbar-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    padding: 10px;
+    background-color: #34495e;
+    border: 2px inset #2c3e50;
+}
+
+.hotbar-slot.active {
+    border-color: #f1c40f;
+    box-shadow: 0 0 8px #f1c40f;
+}
+
+.hotbar-key {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    font-size: 0.5rem;
+    color: rgba(255, 255, 255, 0.6);
+    font-family: 'Press Start 2P', cursive;
+}

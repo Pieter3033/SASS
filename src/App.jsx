@@ -1,11 +1,11 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useGLTF } from '@react-three/drei'
+import { useAnimations, useGLTF } from '@react-three/drei'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import './App.css'
 
-const CESIUMMAN_URL =
-  'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/CesiumMan/glTF-Binary/CesiumMan.glb'
+const CHARACTER_URL = '/models/Character_1.glb'
+const AXE_URL = '/models/Axe.glb'
 
 function createGrassTexture() {
   const size = 256
@@ -49,52 +49,44 @@ function Ground() {
   )
 }
 
-function Axe({ position, rotation, swingRef }) {
-  const groupRef = useRef(null)
-
-  useFrame((_, delta) => {
-    if (!groupRef.current) return
-    const swing = swingRef.current
-    const target = rotation[0] + swing
-    groupRef.current.rotation.x = THREE.MathUtils.lerp(
-      groupRef.current.rotation.x,
-      target,
-      0.25
-    )
-  })
-
+function AxeModel({ position, rotation }) {
+  const { scene } = useGLTF(AXE_URL)
+  useMemo(() => {
+    scene.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+      }
+    })
+  }, [scene])
   return (
-    <group
-      ref={groupRef}
-      position={position}
-      rotation={rotation}
-      scale={0.7}
-      castShadow
-    >
-      <mesh castShadow>
-        <boxGeometry args={[0.1, 0.6, 0.1]} />
-        <meshStandardMaterial color="#6b4f2a" roughness={0.8} />
-      </mesh>
-      <mesh position={[0, 0.2, 0.12]} castShadow>
-        <boxGeometry args={[0.35, 0.18, 0.05]} />
-        <meshStandardMaterial color="#a0a7ad" metalness={0.6} roughness={0.3} />
-      </mesh>
+    <group position={position} rotation={rotation} scale={0.08} castShadow>
+      <primitive object={scene} />
     </group>
   )
 }
 
-function Character({ groupRef, walkRef, chopRef, timeRef }) {
-  const { scene } = useGLTF(CESIUMMAN_URL)
+function Character({ groupRef, walkRef, chopRef, timeRef, axeTuning }) {
+  const { scene, animations } = useGLTF(CHARACTER_URL)
+  const { actions } = useAnimations(animations, scene)
   const pivotRef = useRef(null)
-  const swingRef = useRef(0)
   const axeGroupRef = useRef(null)
+  const axeBaseRotX = useRef(0.2)
+  const axeAttachRef = useRef(null)
   const bonesRef = useRef({
     leftUpper: null,
     leftLower: null,
     rightUpper: null,
     rightLower: null,
     rightHand: null,
+    leftUpperLeg: null,
+    leftLowerLeg: null,
+    rightUpperLeg: null,
+    rightLowerLeg: null,
   })
+
+  const currentAction = useRef(null)
+  const actionCache = useRef({ idle: null, walk: null, chop: null })
 
   useMemo(() => {
     scene.traverse((child) => {
@@ -111,6 +103,7 @@ function Character({ groupRef, walkRef, chopRef, timeRef }) {
       if (child.isBone) bones.push(child)
     })
 
+    const byExact = (name) => bones.find((bone) => bone.name === name)
     const byName = (patterns) =>
       bones.find((bone) =>
         patterns.some((pattern) =>
@@ -118,38 +111,115 @@ function Character({ groupRef, walkRef, chopRef, timeRef }) {
         )
       )
 
-    bonesRef.current.rightHand = byName(['rhand', 'right_hand', 'hand.r', 'r hand', 'right hand'])
-    bonesRef.current.rightLower = byName(['rforearm', 'right_forearm', 'forearm.r', 'r lowerarm', 'right lowerarm'])
-    bonesRef.current.rightUpper = byName(['rupperarm', 'right_upperarm', 'upperarm.r', 'r arm', 'right arm'])
-    bonesRef.current.leftLower = byName(['lforearm', 'left_forearm', 'forearm.l', 'l lowerarm', 'left lowerarm'])
-    bonesRef.current.leftUpper = byName(['lupperarm', 'left_upperarm', 'upperarm.l', 'l arm', 'left arm'])
+    bonesRef.current.rightHand = byExact('WristR') || byName(['wristr', 'wrist.r', 'right_wrist', 'rhand', 'right_hand'])
+    bonesRef.current.rightLower = byExact('LowerArmR') || byName(['lowerarmr', 'forearm', 'r lowerarm'])
+    bonesRef.current.rightUpper = byExact('UpperArmR') || byName(['upperarmr', 'r upperarm'])
+    bonesRef.current.leftLower = byExact('LowerArmL') || byName(['lowerarml', 'forearm', 'l lowerarm'])
+    bonesRef.current.leftUpper = byExact('UpperArmL') || byName(['upperarml', 'l upperarm'])
+    bonesRef.current.leftUpperLeg = byExact('UpperLegL') || byName(['upperlegl', 'thigh'])
+    bonesRef.current.leftLowerLeg = byExact('LowerLegL') || byName(['lowerlegl', 'calf'])
+    bonesRef.current.rightUpperLeg = byExact('UpperLegR') || byName(['upperlegr', 'thigh'])
+    bonesRef.current.rightLowerLeg = byExact('LowerLegR') || byName(['lowerlegr', 'calf'])
   }, [scene])
 
   useEffect(() => {
     if (!axeGroupRef.current) return
-    const rightHand = bonesRef.current.rightHand
-    if (rightHand) {
-      rightHand.add(axeGroupRef.current)
-      axeGroupRef.current.position.set(0.05, -0.02, 0.02)
-      axeGroupRef.current.rotation.set(0.2, 0, Math.PI / 2)
+    const { rightHand, rightLower, rightUpper } = bonesRef.current
+    const attachBone = rightHand || rightLower || rightUpper
+    if (attachBone) {
+      axeAttachRef.current = attachBone
+      attachBone.add(axeGroupRef.current)
+      axeGroupRef.current.scale.setScalar(0.08)
+      if (attachBone === rightHand) {
+        axeBaseRotX.current = 0.2
+        axeGroupRef.current.position.set(0.015, -0.015, 0.02)
+        axeGroupRef.current.rotation.set(axeBaseRotX.current, 0.2, Math.PI / 2)
+      } else if (attachBone === rightLower) {
+        axeBaseRotX.current = 0.1
+        axeGroupRef.current.position.set(0.02, -0.03, 0.015)
+        axeGroupRef.current.rotation.set(axeBaseRotX.current, 0.2, Math.PI / 2)
+      } else {
+        axeBaseRotX.current = 0.05
+        axeGroupRef.current.position.set(0.04, -0.03, 0.015)
+        axeGroupRef.current.rotation.set(axeBaseRotX.current, 0.2, Math.PI / 2)
+      }
     }
   }, [])
+
+  useEffect(() => {
+    if (!axeGroupRef.current) return
+    const { position, rotation, scale } = axeTuning
+    axeGroupRef.current.position.set(position.x, position.y, position.z)
+    axeGroupRef.current.rotation.set(rotation.x, rotation.y, rotation.z)
+    axeGroupRef.current.scale.setScalar(scale)
+  }, [axeTuning])
+
+  useEffect(() => {
+    if (!actions) return
+    const lower = (name) => name.toLowerCase()
+    const findClip = (patterns) =>
+      Object.keys(actions).find((name) =>
+        patterns.some((pattern) => lower(name).includes(pattern))
+      )
+
+    const idleName = findClip(['idle_neutral', 'idle'])
+    const walkName = findClip(['walk'])
+    const chopName = findClip(['sword_slash', 'attack', 'swing'])
+
+    actionCache.current.idle = idleName ? actions[idleName] : null
+    actionCache.current.walk = walkName ? actions[walkName] : null
+    actionCache.current.chop = chopName ? actions[chopName] : null
+
+    if (actionCache.current.chop) {
+      actionCache.current.chop.setLoop(THREE.LoopOnce, 1)
+      actionCache.current.chop.clampWhenFinished = true
+    }
+
+    if (actionCache.current.idle) {
+      actionCache.current.idle.play()
+      currentAction.current = actionCache.current.idle
+    } else if (actionCache.current.walk) {
+      actionCache.current.walk.play()
+      currentAction.current = actionCache.current.walk
+    }
+  }, [actions])
 
   useFrame(() => {
     if (!pivotRef.current) return
     const t = timeRef.current
     const isWalking = walkRef.current
     const isChopping = chopRef.current
-    const walkBob = isWalking ? Math.sin(t * 8) * 0.05 : 0
-    swingRef.current =
-      bonesRef.current.rightHand ? 0 : isChopping ? Math.sin(t * 20) * 0.6 : 0
+    const walkActive = isWalking && !isChopping
+    const walkBob = walkActive ? Math.sin(t * 8) * 0.02 : 0
     pivotRef.current.position.y = walkBob
 
-    const { leftUpper, leftLower, rightUpper, rightLower } = bonesRef.current
-    if (leftUpper) leftUpper.rotation.x = isWalking ? Math.sin(t * 8) * 0.3 : 0
-    if (leftLower) leftLower.rotation.x = isWalking ? Math.sin(t * 8 + 0.6) * 0.2 : 0
-    if (rightUpper) rightUpper.rotation.x = isChopping ? -0.6 + Math.sin(t * 20) * 0.4 : 0
-    if (rightLower) rightLower.rotation.x = isChopping ? -0.8 + Math.sin(t * 20 + 0.4) * 0.3 : 0
+    if (axeAttachRef.current && axeGroupRef.current) {
+      const swing = isChopping ? Math.sin(t * 20) * 0.6 : 0
+      axeGroupRef.current.rotation.x = axeBaseRotX.current + swing
+    }
+
+    const { idle, walk, chop } = actionCache.current
+    if (isChopping && chop) {
+      if (currentAction.current !== chop) {
+        currentAction.current?.fadeOut(0.15)
+        chop.reset().fadeIn(0.1).play()
+        currentAction.current = chop
+      }
+      return
+    }
+    if (isWalking && walk) {
+      if (currentAction.current !== walk) {
+        currentAction.current?.fadeOut(0.15)
+        walk.reset().fadeIn(0.1).play()
+        currentAction.current = walk
+      }
+      return
+    }
+    if (idle && currentAction.current !== idle) {
+      currentAction.current?.fadeOut(0.15)
+      idle.reset().fadeIn(0.1).play()
+      currentAction.current = idle
+    }
   })
 
   return (
@@ -157,7 +227,7 @@ function Character({ groupRef, walkRef, chopRef, timeRef }) {
       <group ref={pivotRef}>
         <primitive object={scene} />
         <group ref={axeGroupRef} position={[0.45, 1.1, 0.1]}>
-          <Axe position={[0, 0, 0]} rotation={[0, 0, Math.PI / 2]} swingRef={swingRef} />
+          <AxeModel position={[0, 0, 0]} rotation={[0, 0, Math.PI / 2]} />
         </group>
       </group>
     </group>
@@ -226,7 +296,7 @@ function Tree({ position = [3, 0, -2], canChop, onChop }) {
   )
 }
 
-function Scene({ onHint, onTreeHealth }) {
+function Scene({ onHint, onTreeHealth, axeTuning }) {
   const { camera } = useThree()
   const [treeHealth, setTreeHealth] = useState(3)
   const playerRef = useRef(new THREE.Vector3(0, 0, 0))
@@ -237,6 +307,9 @@ function Scene({ onHint, onTreeHealth }) {
   const tempDirection = useRef(new THREE.Vector3())
   const tempCameraTarget = useRef(new THREE.Vector3())
   const tempCameraPos = useRef(new THREE.Vector3())
+  const tempQuat = useRef(new THREE.Quaternion())
+  const tempVec = useRef(new THREE.Vector3())
+  const lastMoveDir = useRef(new THREE.Vector3(0, 0, 1))
   const isWalkingRef = useRef(false)
   const isChoppingRef = useRef(false)
   const chopCooldown = useRef(0)
@@ -257,6 +330,20 @@ function Scene({ onHint, onTreeHealth }) {
     }
   }, [])
 
+  const triggerSwing = () => {
+    if (chopCooldown.current > 0) return
+    chopCooldown.current = 0.35
+    isChoppingRef.current = true
+  }
+
+  useEffect(() => {
+    const handleClick = () => {
+      triggerSwing()
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [])
+
   useFrame((_, delta) => {
     clock.current += delta
     const direction = tempDirection.current.set(
@@ -265,7 +352,9 @@ function Scene({ onHint, onTreeHealth }) {
       (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0)
     )
     if (direction.lengthSq() > 0) {
-      direction.normalize().multiplyScalar(speed * delta)
+      direction.normalize()
+      lastMoveDir.current.copy(direction)
+      direction.multiplyScalar(speed * delta)
       playerRef.current.add(direction)
       isWalkingRef.current = true
     } else {
@@ -274,6 +363,12 @@ function Scene({ onHint, onTreeHealth }) {
 
     if (characterRef.current) {
       characterRef.current.position.copy(playerRef.current)
+      if (isWalkingRef.current) {
+        const yaw = Math.atan2(lastMoveDir.current.x, lastMoveDir.current.z)
+        tempVec.current.set(0, 1, 0)
+        tempQuat.current.setFromAxisAngle(tempVec.current, yaw)
+        characterRef.current.quaternion.slerp(tempQuat.current, 0.2)
+      }
     }
 
     const cameraTarget = tempCameraTarget.current.set(
@@ -281,10 +376,11 @@ function Scene({ onHint, onTreeHealth }) {
       1.8,
       playerRef.current.z
     )
+    const scaledOffset = tempVec.current.set(6, 6, 8)
     const desiredCameraPos = tempCameraPos.current.set(
-      playerRef.current.x + 6,
-      6,
-      playerRef.current.z + 8
+      playerRef.current.x + scaledOffset.x,
+      scaledOffset.y,
+      playerRef.current.z + scaledOffset.z
     )
     camera.position.lerp(desiredCameraPos, 0.08)
     camera.lookAt(cameraTarget)
@@ -319,9 +415,7 @@ function Scene({ onHint, onTreeHealth }) {
   }, [canChop, treeHealth, onHint])
 
   const handleChop = () => {
-    if (chopCooldown.current > 0) return treeHealth
-    chopCooldown.current = 0.35
-    isChoppingRef.current = true
+    triggerSwing()
     setTreeHealth((prev) => Math.max(prev - 1, 0))
     return Math.max(treeHealth - 1, 0)
   }
@@ -344,6 +438,7 @@ function Scene({ onHint, onTreeHealth }) {
         walkRef={isWalkingRef}
         chopRef={isChoppingRef}
         timeRef={clock}
+        axeTuning={axeTuning}
       />
     </>
   )
@@ -352,6 +447,9 @@ function Scene({ onHint, onTreeHealth }) {
 function App() {
   const [hint, setHint] = useState('Use WASD to move. Click the tree to chop.')
   const [treeHealth, setTreeHealth] = useState(3)
+  const [axePos, setAxePos] = useState({ x: -0.00175, y: 0.001, z: -0.0001 })
+  const [axeRot, setAxeRot] = useState({ x: 2, y: 0, z: 0.25 })
+  const [axeScale, setAxeScale] = useState(0.08)
 
   return (
     <div className="app">
@@ -359,6 +457,7 @@ function App() {
         <Scene
           onHint={(text) => setHint(text)}
           onTreeHealth={(value) => setTreeHealth(value)}
+          axeTuning={{ position: axePos, rotation: axeRot, scale: axeScale }}
         />
       </Canvas>
       <div className="hud">
@@ -370,6 +469,7 @@ function App() {
   )
 }
 
-useGLTF.preload(CESIUMMAN_URL)
+useGLTF.preload(CHARACTER_URL)
+useGLTF.preload(AXE_URL)
 
 export default App

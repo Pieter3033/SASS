@@ -16,7 +16,7 @@
   border: 1px solid rgba(255, 255, 255, 0.2);
   backdrop-filter: blur(6px);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
-  max-width: 280px;
+  max-width: 320px;
 }
 
 .title {

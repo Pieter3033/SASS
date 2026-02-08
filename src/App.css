@@ -5,6 +5,49 @@
   overflow: hidden;
 }
 
+.app.locked {
+  cursor: none;
+}
+
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.crosshair::before,
+.crosshair::after {
+  content: '';
+  position: absolute;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 1px;
+}
+
+.crosshair::before {
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 18px;
+  transform: translateX(-50%);
+}
+
+.crosshair::after {
+  top: 50%;
+  left: 0;
+  height: 2px;
+  width: 18px;
+  transform: translateY(-50%);
+}
+
+.crosshair.show {
+  opacity: 1;
+}
 .hud {
   position: absolute;
   left: 24px;

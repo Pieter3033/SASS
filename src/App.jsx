@@ -44,10 +44,13 @@ function createGrassTexture() {
 
 function Ground() {
   const grassTexture = useMemo(() => createGrassTexture(), [])
+  const geometry = useMemo(() => new THREE.PlaneGeometry(20, 20), [])
+  const material = useMemo(
+    () => new THREE.MeshStandardMaterial({ map: grassTexture }),
+    [grassTexture]
+  )
   return (
-    <mesh rotation-x={-Math.PI / 2} receiveShadow>
-      <planeGeometry args={[20, 20]} />
-      <meshStandardMaterial map={grassTexture} />
+    <mesh rotation-x={-Math.PI / 2} receiveShadow geometry={geometry} material={material}>
     </mesh>
   )
 }
@@ -64,18 +67,20 @@ function AxeModel({ position, rotation }) {
   }, [scene])
   return (
     <group position={position} rotation={rotation} scale={0.08} castShadow>
-      <primitive object={scene} />
+      <primitive object={scene} frustumCulled />
     </group>
   )
 }
 
-function Character({ groupRef, walkRef, chopRef, timeRef, axeTuning }) {
+function Character({ groupRef, walkRef, chopRef, timeRef, axeTuning, swingValueRef, swingDirRef, firstPersonRef }) {
   const { scene, animations } = useGLTF(CHARACTER_URL)
   const { actions } = useAnimations(animations, scene)
   const pivotRef = useRef(null)
   const axeGroupRef = useRef(null)
   const axeBaseRotX = useRef(0.2)
   const axeAttachRef = useRef(null)
+  const axeBaseScaleRef = useRef(0.08)
+  const skinnedMeshesRef = useRef([])
   const bonesRef = useRef({
     rightHand: null,
     rightLower: null,
@@ -86,10 +91,14 @@ function Character({ groupRef, walkRef, chopRef, timeRef, axeTuning }) {
   const actionCache = useRef({ idle: null, walk: null, chop: null })
 
   useMemo(() => {
+    skinnedMeshesRef.current = []
     scene.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true
         child.receiveShadow = true
+        if (child.isSkinnedMesh) {
+          skinnedMeshesRef.current.push(child)
+        }
       }
     })
   }, [scene])
@@ -142,6 +151,7 @@ function Character({ groupRef, walkRef, chopRef, timeRef, axeTuning }) {
     const { position, rotation, scale } = axeTuning
     axeGroupRef.current.position.set(position.x, position.y, position.z)
     axeGroupRef.current.rotation.set(rotation.x, rotation.y, rotation.z)
+    axeBaseScaleRef.current = scale
     axeGroupRef.current.scale.setScalar(scale)
   }, [axeTuning])
 
@@ -226,6 +236,25 @@ function Tree({ position = [3, 0, -2], canChop, onChop }) {
   const [isFalling, setIsFalling] = useState(false)
   const fallAmount = useRef(0)
   const hitTime = useRef(0)
+  const trunkGeometry = useMemo(() => new THREE.CylinderGeometry(0.25, 0.35, 2.2, 8), [])
+  const leafGeometry = useMemo(() => new THREE.ConeGeometry(1.2, 2.4, 10), [])
+  const topGeometry = useMemo(() => new THREE.SphereGeometry(0.6, 10, 10), [])
+  const trunkMaterial = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: '#6a4a2f', roughness: 0.9 }),
+    []
+  )
+  const trunkMaterialInactive = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: '#4f3a26', roughness: 0.9 }),
+    []
+  )
+  const leafMaterial = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: '#2f6f32', roughness: 0.9 }),
+    []
+  )
+  const topMaterial = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: '#357a3a', roughness: 0.9 }),
+    []
+  )
 
   useFrame((_, delta) => {
     if (!isFalling || !groupRef.current) return
@@ -264,19 +293,15 @@ function Tree({ position = [3, 0, -2], canChop, onChop }) {
 
   return (
     <group ref={groupRef} position={position} onPointerDown={handleChop}>
-      <mesh ref={trunkRef} castShadow>
-        <cylinderGeometry args={[0.25, 0.35, 2.2, 8]} />
-        <meshStandardMaterial color={canChop ? '#6a4a2f' : '#4f3a26'} roughness={0.9} />
-      </mesh>
-      <mesh position={[0, 1.6, 0]} castShadow>
-        <coneGeometry args={[1.2, 2.4, 10]} />
-        <meshStandardMaterial color="#2f6f32" roughness={0.9} />
-      </mesh>
+      <mesh
+        ref={trunkRef}
+        castShadow
+        geometry={trunkGeometry}
+        material={canChop ? trunkMaterial : trunkMaterialInactive}
+      />
+      <mesh position={[0, 1.6, 0]} castShadow geometry={leafGeometry} material={leafMaterial} />
       {!isFalling && (
-        <mesh position={[0, 2.8, 0]} castShadow>
-          <sphereGeometry args={[0.6, 10, 10]} />
-          <meshStandardMaterial color="#357a3a" roughness={0.9} />
-        </mesh>
+        <mesh position={[0, 2.8, 0]} castShadow geometry={topGeometry} material={topMaterial} />
       )}
     </group>
   )
@@ -287,7 +312,7 @@ function Scene({ onHint, onTreeHealth, axeTuning, isPlaying }) {
   const [treeHealth, setTreeHealth] = useState(3)
   const playerRef = useRef(new THREE.Vector3(0, 0, 0))
   const characterRef = useRef(null)
-  const [keys, setKeys] = useState({})
+  const keysRef = useRef({})
   const speed = 3
   const treePosition = useMemo(() => new THREE.Vector3(3, 0, -2), [])
   const tempDirection = useRef(new THREE.Vector3())
@@ -298,15 +323,34 @@ function Scene({ onHint, onTreeHealth, axeTuning, isPlaying }) {
   const lastMoveDir = useRef(new THREE.Vector3(0, 0, 1))
   const isWalkingRef = useRef(false)
   const isChoppingRef = useRef(false)
+  const swingDirRef = useRef(1)
+  const swingValueRef = useRef(0)
+  const swingProgressRef = useRef(0)
+  const swingActiveRef = useRef(false)
   const chopCooldown = useRef(0)
   const clock = useRef(0)
+  const firstPersonRef = useRef(false)
+  const zoomFactorRef = useRef(1)
+  const yawRef = useRef(0)
+  const pitchRef = useRef(0)
+  const targetYawRef = useRef(0)
+  const targetPitchRef = useRef(0)
+  const moveVelRef = useRef(new THREE.Vector3())
+  const forwardRef = useRef(new THREE.Vector3())
+  const rightRef = useRef(new THREE.Vector3())
 
   useEffect(() => {
     const handleDown = (event) => {
-      setKeys((prev) => ({ ...prev, [event.code]: true }))
+      keysRef.current[event.code] = true
+      if (event.code === 'KeyF') {
+        firstPersonRef.current = !firstPersonRef.current
+        if (onFirstPersonChange) {
+          onFirstPersonChange(firstPersonRef.current)
+        }
+      }
     }
     const handleUp = (event) => {
-      setKeys((prev) => ({ ...prev, [event.code]: false }))
+      keysRef.current[event.code] = false
     }
     window.addEventListener('keydown', handleDown)
     window.addEventListener('keyup', handleUp)
@@ -316,8 +360,33 @@ function Scene({ onHint, onTreeHealth, axeTuning, isPlaying }) {
     }
   }, [])
 
+  useEffect(() => {
+    const handleWheel = (event) => {
+      if (firstPersonRef.current) return
+      const next = Math.min(Math.max(zoomFactorRef.current + event.deltaY * 0.001, 0.4), 2.5)
+      zoomFactorRef.current = next
+    }
+    window.addEventListener('wheel', handleWheel, { passive: true })
+    return () => window.removeEventListener('wheel', handleWheel)
+  }, [])
+
+  useEffect(() => {
+    const handleMouseMove = (event) => {
+      if (!firstPersonRef.current) return
+      if (!pointerLocked) return
+      targetYawRef.current -= event.movementX * 0.002
+      targetPitchRef.current += event.movementY * 0.002
+      targetPitchRef.current = Math.max(-1.2, Math.min(1.2, targetPitchRef.current))
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => window.removeEventListener('mousemove', handleMouseMove)
+  }, [pointerLocked])
+
   const triggerSwing = () => {
     if (chopCooldown.current > 0) return
+    swingDirRef.current *= -1
+    swingProgressRef.current = 0
+    swingActiveRef.current = true
     chopCooldown.current = 0.35
     isChoppingRef.current = true
   }
@@ -334,24 +403,42 @@ function Scene({ onHint, onTreeHealth, axeTuning, isPlaying }) {
     if (!isPlaying) return
 
     clock.current += delta
-    const direction = tempDirection.current.set(
-      (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0),
-      0,
-      (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0)
-    )
+    const inputX = (keysRef.current.KeyD ? 1 : 0) - (keysRef.current.KeyA ? 1 : 0)
+    const inputZ = (keysRef.current.KeyS ? 1 : 0) - (keysRef.current.KeyW ? 1 : 0)
+    const direction = tempDirection.current.set(inputX, 0, inputZ)
+    const moveVel = moveVelRef.current
     if (direction.lengthSq() > 0) {
       direction.normalize()
-      lastMoveDir.current.copy(direction)
-      direction.multiplyScalar(speed * delta)
-      playerRef.current.add(direction)
+      if (firstPersonRef.current) {
+        const forward = forwardRef.current.set(
+          Math.sin(yawRef.current),
+          0,
+          Math.cos(yawRef.current)
+        )
+        const right = rightRef.current.set(-forward.z, 0, forward.x)
+        const moveDir = tempVec.current
+          .set(0, 0, 0)
+          .addScaledVector(right, inputX)
+          .addScaledVector(forward, -inputZ)
+        if (moveDir.lengthSq() > 0) moveDir.normalize()
+        lastMoveDir.current.copy(moveDir)
+        moveDir.multiplyScalar(speed)
+        moveVel.lerp(moveDir, 0.15)
+      } else {
+        lastMoveDir.current.copy(direction)
+        direction.multiplyScalar(speed)
+        moveVel.lerp(direction, 0.15)
+      }
       isWalkingRef.current = true
     } else {
+      moveVel.lerp(tempVec.current.set(0, 0, 0), 0.2)
       isWalkingRef.current = false
     }
+    playerRef.current.addScaledVector(moveVel, delta)
 
     if (characterRef.current) {
       characterRef.current.position.copy(playerRef.current)
-      if (isWalkingRef.current) {
+      if (!firstPersonRef.current && isWalkingRef.current) {
         const yaw = Math.atan2(lastMoveDir.current.x, lastMoveDir.current.z)
         tempVec.current.set(0, 1, 0)
         tempQuat.current.setFromAxisAngle(tempVec.current, yaw)
@@ -359,25 +446,66 @@ function Scene({ onHint, onTreeHealth, axeTuning, isPlaying }) {
       }
     }
 
-    const cameraTarget = tempCameraTarget.current.set(
-      playerRef.current.x,
-      1.8,
-      playerRef.current.z
-    )
-    const scaledOffset = tempVec.current.set(6, 6, 8)
-    const desiredCameraPos = tempCameraPos.current.set(
-      playerRef.current.x + scaledOffset.x,
-      scaledOffset.y,
-      playerRef.current.z + scaledOffset.z
-    )
-    camera.position.lerp(desiredCameraPos, 0.08)
-    camera.lookAt(cameraTarget)
+    if (firstPersonRef.current && characterRef.current) {
+      yawRef.current = THREE.MathUtils.lerp(yawRef.current, targetYawRef.current, 0.06)
+      pitchRef.current = THREE.MathUtils.lerp(pitchRef.current, targetPitchRef.current, 0.06)
+      characterRef.current.rotation.y = yawRef.current
+      const headPos = tempCameraPos.current.set(
+        characterRef.current.position.x + fpConfig.offset.x,
+        characterRef.current.position.y + fpConfig.offset.y,
+        characterRef.current.position.z + fpConfig.offset.z
+      )
+      const forward = tempCameraTarget.current
+        .set(Math.sin(yawRef.current), 0, Math.cos(yawRef.current))
+        .applyAxisAngle(new THREE.Vector3(1, 0, 0), pitchRef.current)
+        .multiplyScalar(fpConfig.lookDistance)
+        .add(headPos)
+      camera.position.lerp(headPos, 0.12)
+      camera.lookAt(forward)
+      camera.fov = fpConfig.fov
+      camera.updateProjectionMatrix()
+    } else {
+      const cameraTarget = tempCameraTarget.current.set(
+        playerRef.current.x,
+        1.8,
+        playerRef.current.z
+      )
+      const scaledOffset = tempVec.current.set(6, 6, 8).multiplyScalar(zoomFactorRef.current)
+      const desiredCameraPos = tempCameraPos.current.set(
+        playerRef.current.x + scaledOffset.x,
+        scaledOffset.y,
+        playerRef.current.z + scaledOffset.z
+      )
+      camera.position.lerp(desiredCameraPos, 0.08)
+      camera.lookAt(cameraTarget)
+      camera.fov = 45
+      camera.updateProjectionMatrix()
+    }
 
     if (chopCooldown.current > 0) {
       chopCooldown.current = Math.max(chopCooldown.current - delta, 0)
       if (chopCooldown.current === 0) {
         isChoppingRef.current = false
       }
+    }
+
+    if (swingActiveRef.current) {
+      swingProgressRef.current = Math.min(swingProgressRef.current + delta * 3.5, 1)
+      const phase = Math.sin(Math.PI * swingProgressRef.current)
+      swingValueRef.current = phase * 0.8 * swingDirRef.current
+      if (swingProgressRef.current >= 1) {
+        swingActiveRef.current = false
+        swingValueRef.current = 0
+      }
+    }
+
+    if (onSwingDebug) {
+      onSwingDebug({
+        dir: swingDirRef.current,
+        value: swingValueRef.current,
+        active: swingActiveRef.current ? 1 : 0,
+        progress: swingProgressRef.current,
+      })
     }
   })
 
@@ -428,6 +556,9 @@ function Scene({ onHint, onTreeHealth, axeTuning, isPlaying }) {
         chopRef={isChoppingRef}
         timeRef={clock}
         axeTuning={axeTuning}
+        swingValueRef={swingValueRef}
+        swingDirRef={swingDirRef}
+        firstPersonRef={firstPersonRef}
       />
     </>
   )
@@ -437,9 +568,55 @@ function Game() {
   const { gameState, inventoryOpen, toggleInventory, openMenu, setSelectedHotbarSlot, selectedHotbarSlot, gameKey } = useGame();
   const [hint, setHint] = useState('Use WASD to move. Click the tree to chop.')
   const [treeHealth, setTreeHealth] = useState(3)
-  const [axePos, setAxePos] = useState({ x: -0.00175, y: 0.001, z: -0.0001 })
-  const [axeRot, setAxeRot] = useState({ x: 2, y: 0, z: 0.25 })
-  const [axeScale, setAxeScale] = useState(0.08)
+  const [cursorLocked, setCursorLocked] = useState(false)
+  const [firstPerson, setFirstPerson] = useState(false)
+  const canvasRef = useRef(null)
+  const [fpOffset] = useState({ x: 0, y: 1.6, z: 0 })
+  const [fpLook] = useState({ x: 0, y: 0, z: 1 })
+  const [fpLookDistance] = useState(2)
+  const [fpFov] = useState(45)
+  const axeTuning = useMemo(
+    () => ({
+      position: { x: -0.00175, y: 0.001, z: -0.0001 },
+      rotation: { x: 2, y: 0, z: 0.25 },
+      scale: 0.08,
+    }),
+    []
+  )
+
+  useEffect(() => {
+    const handlePointerLockChange = () => {
+      const locked = document.pointerLockElement === canvasRef.current
+      setCursorLocked(locked)
+    }
+    document.addEventListener('pointerlockchange', handlePointerLockChange)
+    return () => document.removeEventListener('pointerlockchange', handlePointerLockChange)
+  }, [])
+
+  useEffect(() => {
+    const handleEsc = (event) => {
+      if (event.code !== 'Escape') return
+      if (document.pointerLockElement) {
+        document.exitPointerLock()
+      }
+    }
+    window.addEventListener('keydown', handleEsc)
+    return () => window.removeEventListener('keydown', handleEsc)
+  }, [])
+
+  useEffect(() => {
+    if (firstPerson) return
+    if (document.pointerLockElement) {
+      document.exitPointerLock()
+    }
+  }, [firstPerson])
+
+  const handleCanvasPointerDown = () => {
+    if (!firstPerson) return
+    if (!canvasRef.current) return
+    if (document.pointerLockElement === canvasRef.current) return
+    canvasRef.current.requestPointerLock()
+  }
 
   const isPlaying = gameState === 'playing';
 
@@ -459,8 +636,16 @@ function Game() {
   }, [toggleInventory, openMenu, setSelectedHotbarSlot]);
 
   return (
-    <div className="app">
-      <Canvas shadows camera={{ position: [6, 6, 8], fov: 45 }}>
+    <div className={`app ${cursorLocked ? 'locked' : ''}`}>
+      <Canvas
+        shadows
+        camera={{ position: [6, 6, 8], fov: 45 }}
+        dpr={[1, 1.5]}
+        onCreated={({ gl }) => {
+          canvasRef.current = gl.domElement
+        }}
+        onPointerDown={handleCanvasPointerDown}
+      >
         <Scene
           key={gameKey}
           onHint={(text) => setHint(text)}

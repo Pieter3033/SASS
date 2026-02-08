@@ -3,6 +3,9 @@ import { useAnimations, useGLTF } from '@react-three/drei'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import './App.css'
+import { GameProvider, useGame } from './context/GameContext'
+import MainMenu from './components/MainMenu'
+import Inventory from './components/Inventory'
 
 const CHARACTER_URL = '/models/Character_1.glb'
 const AXE_URL = '/models/Axe.glb'
@@ -79,15 +82,9 @@ function Character({ groupRef, walkRef, chopRef, timeRef, axeTuning, swingValueR
   const axeBaseScaleRef = useRef(0.08)
   const skinnedMeshesRef = useRef([])
   const bonesRef = useRef({
-    leftUpper: null,
-    leftLower: null,
-    rightUpper: null,
-    rightLower: null,
     rightHand: null,
-    leftUpperLeg: null,
-    leftLowerLeg: null,
-    rightUpperLeg: null,
-    rightLowerLeg: null,
+    rightLower: null,
+    rightUpper: null,
   })
 
   const currentAction = useRef(null)
@@ -123,12 +120,6 @@ function Character({ groupRef, walkRef, chopRef, timeRef, axeTuning, swingValueR
     bonesRef.current.rightHand = byExact('WristR') || byName(['wristr', 'wrist.r', 'right_wrist', 'rhand', 'right_hand'])
     bonesRef.current.rightLower = byExact('LowerArmR') || byName(['lowerarmr', 'forearm', 'r lowerarm'])
     bonesRef.current.rightUpper = byExact('UpperArmR') || byName(['upperarmr', 'r upperarm'])
-    bonesRef.current.leftLower = byExact('LowerArmL') || byName(['lowerarml', 'forearm', 'l lowerarm'])
-    bonesRef.current.leftUpper = byExact('UpperArmL') || byName(['upperarml', 'l upperarm'])
-    bonesRef.current.leftUpperLeg = byExact('UpperLegL') || byName(['upperlegl', 'thigh'])
-    bonesRef.current.leftLowerLeg = byExact('LowerLegL') || byName(['lowerlegl', 'calf'])
-    bonesRef.current.rightUpperLeg = byExact('UpperLegR') || byName(['upperlegr', 'thigh'])
-    bonesRef.current.rightLowerLeg = byExact('LowerLegR') || byName(['lowerlegr', 'calf'])
   }, [scene])
 
   useEffect(() => {
@@ -188,9 +179,6 @@ function Character({ groupRef, walkRef, chopRef, timeRef, axeTuning, swingValueR
     if (actionCache.current.idle) {
       actionCache.current.idle.play()
       currentAction.current = actionCache.current.idle
-    } else if (actionCache.current.walk) {
-      actionCache.current.walk.play()
-      currentAction.current = actionCache.current.walk
     }
   }, [actions])
 
@@ -199,56 +187,34 @@ function Character({ groupRef, walkRef, chopRef, timeRef, axeTuning, swingValueR
     const t = timeRef.current
     const isWalking = walkRef.current
     const isChopping = chopRef.current
-    const walkActive = isWalking && !isChopping
-    const walkBob = walkActive ? Math.sin(t * 8) * 0.02 : 0
-    pivotRef.current.position.y = walkBob
-
-    if (axeAttachRef.current && axeGroupRef.current) {
-      const swing = isChopping ? swingValueRef.current : 0
-      const baseX = axeTuning.rotation.x
-      const baseY = axeTuning.rotation.y
-      const baseZ = axeTuning.rotation.z
-      axeGroupRef.current.rotation.x = baseX
-      axeGroupRef.current.rotation.y = baseY
-      axeGroupRef.current.rotation.z = baseZ + swing
-      axeGroupRef.current.scale.set(
-        axeBaseScaleRef.current * swingDirRef.current,
-        axeBaseScaleRef.current,
-        axeBaseScaleRef.current
-      )
-    }
-
-    if (firstPersonRef?.current) {
-      skinnedMeshesRef.current.forEach((mesh) => {
-        if (mesh.visible) mesh.visible = false
-      })
-    } else {
-      skinnedMeshesRef.current.forEach((mesh) => {
-        if (!mesh.visible) mesh.visible = true
-      })
-    }
 
     const { idle, walk, chop } = actionCache.current
+
     if (isChopping && chop) {
       if (currentAction.current !== chop) {
         currentAction.current?.fadeOut(0.15)
         chop.reset().fadeIn(0.1).play()
         currentAction.current = chop
       }
-      return
-    }
-    if (isWalking && walk) {
+    } else if (isWalking && walk) {
       if (currentAction.current !== walk) {
         currentAction.current?.fadeOut(0.15)
         walk.reset().fadeIn(0.1).play()
         currentAction.current = walk
       }
-      return
-    }
-    if (idle && currentAction.current !== idle) {
+    } else if (idle && currentAction.current !== idle && !isChopping) {
       currentAction.current?.fadeOut(0.15)
       idle.reset().fadeIn(0.1).play()
       currentAction.current = idle
+    }
+
+    const walkActive = isWalking && !isChopping
+    const walkBob = walkActive ? Math.sin(t * 8) * 0.02 : 0
+    pivotRef.current.position.y = walkBob
+
+    if (axeAttachRef.current && axeGroupRef.current) {
+      const swing = isChopping ? Math.sin(t * 20) * 0.6 : 0
+      axeGroupRef.current.rotation.x = axeBaseRotX.current + swing
     }
   })
 
@@ -341,7 +307,7 @@ function Tree({ position = [3, 0, -2], canChop, onChop }) {
   )
 }
 
-function Scene({ onHint, onTreeHealth, axeTuning, onSwingDebug, fpConfig, onFirstPersonChange, pointerLocked }) {
+function Scene({ onHint, onTreeHealth, axeTuning, isPlaying }) {
   const { camera } = useThree()
   const [treeHealth, setTreeHealth] = useState(3)
   const playerRef = useRef(new THREE.Vector3(0, 0, 0))
@@ -427,13 +393,15 @@ function Scene({ onHint, onTreeHealth, axeTuning, onSwingDebug, fpConfig, onFirs
 
   useEffect(() => {
     const handleClick = () => {
-      triggerSwing()
+      if (isPlaying) triggerSwing()
     }
     window.addEventListener('mousedown', handleClick)
     return () => window.removeEventListener('mousedown', handleClick)
-  }, [])
+  }, [isPlaying])
 
   useFrame((_, delta) => {
+    if (!isPlaying) return
+
     clock.current += delta
     const inputX = (keysRef.current.KeyD ? 1 : 0) - (keysRef.current.KeyA ? 1 : 0)
     const inputZ = (keysRef.current.KeyS ? 1 : 0) - (keysRef.current.KeyW ? 1 : 0)
@@ -563,6 +531,7 @@ function Scene({ onHint, onTreeHealth, axeTuning, onSwingDebug, fpConfig, onFirs
   }, [canChop, treeHealth, onHint])
 
   const handleChop = () => {
+    if (!isPlaying) return treeHealth;
     triggerSwing()
     setTreeHealth((prev) => Math.max(prev - 1, 0))
     return Math.max(treeHealth - 1, 0)
@@ -595,7 +564,8 @@ function Scene({ onHint, onTreeHealth, axeTuning, onSwingDebug, fpConfig, onFirs
   )
 }
 
-function App() {
+function Game() {
+  const { gameState, inventoryOpen, toggleInventory, openMenu, setSelectedHotbarSlot, selectedHotbarSlot, gameKey } = useGame();
   const [hint, setHint] = useState('Use WASD to move. Click the tree to chop.')
   const [treeHealth, setTreeHealth] = useState(3)
   const [cursorLocked, setCursorLocked] = useState(false)
@@ -648,6 +618,23 @@ function App() {
     canvasRef.current.requestPointerLock()
   }
 
+  const isPlaying = gameState === 'playing';
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.code === 'Escape') {
+        openMenu();
+      } else if (e.code === 'Tab' || e.code === 'KeyI') {
+        toggleInventory();
+      } else if (e.code.startsWith('Digit') && parseInt(e.key) >= 1 && parseInt(e.key) <= 5) {
+        setSelectedHotbarSlot(parseInt(e.key) - 1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleInventory, openMenu, setSelectedHotbarSlot]);
+
   return (
     <div className={`app ${cursorLocked ? 'locked' : ''}`}>
       <Canvas
@@ -660,32 +647,39 @@ function App() {
         onPointerDown={handleCanvasPointerDown}
       >
         <Scene
+          key={gameKey}
           onHint={(text) => setHint(text)}
           onTreeHealth={(value) => setTreeHealth(value)}
-          onSwingDebug={null}
-          onFirstPersonChange={(value) => setFirstPerson(value)}
-          axeTuning={axeTuning}
-          pointerLocked={cursorLocked}
-          fpConfig={{
-            offset: fpOffset,
-            look: fpLook,
-            lookDistance: fpLookDistance,
-            fov: fpFov,
-          }}
+          axeTuning={{ position: axePos, rotation: axeRot, scale: axeScale }}
+          isPlaying={isPlaying}
         />
       </Canvas>
-      <div className={`crosshair ${cursorLocked ? 'show' : ''}`} />
-      <div className="hud">
-        <div className="title">Survival Prototype</div>
-        <div className="text">{hint}</div>
-        <div className="text">Tree health: {treeHealth}</div>
-        <div className="text">Scroll to zoom. Press F for first person.</div>
-      </div>
+
+      {gameState === 'playing' && (
+        <div className="hud">
+          <div className="title">Survival Prototype</div>
+          <div className="text">{hint}</div>
+          <div className="text">Tree health: {treeHealth}</div>
+          <div className="hotbar-overlay">
+            <div className="hud-hotbar">
+              {[1, 2, 3, 4, 5].map(n => (
+                <div key={n} className={`hud-slot ${selectedHotbarSlot === n - 1 ? 'active' : ''}`}>{n}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gameState === 'menu' && <MainMenu />}
+      {(gameState === 'inventory' || inventoryOpen) && <Inventory />}
     </div>
   )
 }
 
-useGLTF.preload(CHARACTER_URL)
-useGLTF.preload(AXE_URL)
-
-export default App
+export default function App() {
+  return (
+    <GameProvider>
+      <Game />
+    </GameProvider>
+  )
+}
